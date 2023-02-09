@@ -140,6 +140,8 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             serializer.endTag("", "display-name")
             serializer.endTag("", "channel")
 
+            notify("Processing...", NotificationLevel.PROGRESS)
+
             val url = "https://www.mezzo.tv/en/tv-schedule"
             val now = LocalDate.now()
             for (days in 0..13) {
@@ -230,12 +232,12 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         } finally {
 
         }
-
+        
         return "error\r\n"
     }
 
     enum class NotificationLevel {
-        INFO, WARNINIG
+        INFO, WARNINIG, PROGRESS
     }
     private fun notify(text: String, level: NotificationLevel = NotificationLevel.INFO) {
         if (level == NotificationLevel.INFO)
@@ -251,6 +253,9 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             .setContentTitle("Mezzo parser")
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+
+        if (level == NotificationLevel.PROGRESS)
+            builder.setProgress(100, 0, true)
 
         with(NotificationManagerCompat.from(context)) {
             val channel = NotificationChannel(CHANNEL_ID, "Parser notifications", NotificationManager.IMPORTANCE_DEFAULT)
