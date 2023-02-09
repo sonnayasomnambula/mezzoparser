@@ -13,10 +13,12 @@ import android.util.Log
 import android.util.Xml
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import org.jsoup.HttpStatusException
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.io.StringWriter
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 class ParserThread(private val context: Context, private val resolver: ContentResolver, private val settings: SharedPreferences) : Thread() {
@@ -43,25 +45,21 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         }
     }
 
-    private fun getSpan(el: Element) : Element? {
+    private fun findTimeAndTitle(el: Element) : Pair<LocalTime, String>? {
         for (child in el.children()) {
             if (child.tagName() == "span") {
-                return child
+                try {
+                    val time = LocalTime.parse(child.text().trim(), DateTimeFormatter.ofPattern("H:mm"))
+                    val title = el.ownText().trim()
+                    return Pair(time, title)
+                } catch (e: java.time.format.DateTimeParseException) {
+                    Log.w(LOG_TAG, "Parse error: '${child.text()}' is not a valid time string")
+                }
+            } else {
+                val pair = findTimeAndTitle(child)
+                if (pair != null)
+                    return pair
             }
-        }
-        return null
-    }
-
-    private fun findTimeAndTitle(el: Element) : Pair<String, String>? {
-        val span = getSpan(el)
-        if (span != null) {
-            return Pair(span.text().trim(), el.ownText().trim())
-        }
-
-        for (child in el.children()) {
-            val pair = findTimeAndTitle(child)
-            if (pair != null)
-                return pair
         }
 
         return null
@@ -105,22 +103,16 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         return null
     }
 
-    private fun timeString(time: String) : String {
-        var ret = time
-        ret = ret.replace(":", "")
-        while (ret.length < 4)
-            ret = "0" + ret
+    private fun timeString(date: LocalDate, time: LocalTime) : String =
+        date.format(DateTimeFormatter.ofPattern("yyyyMMdd")) + time.format(DateTimeFormatter.ofPattern("HHmmss")) + " +0300"
 
-        val now = LocalDate.now()
-        return now.format(DateTimeFormatter.ofPattern("yyyyMMdd")) + ret + "00 +0300"
-    }
 
     private fun getShedule() : String {
         val lang = "ru"
         val serializer = Xml.newSerializer()
         val writer = StringWriter()
 
-        var prevTime: String? = null
+        var prevTime: LocalTime? = null
         var prevTitle: String? = null
         var prevDesc: String? = null
 
@@ -149,72 +141,81 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             serializer.endTag("", "channel")
 
             val url = "https://www.mezzo.tv/en/tv-schedule"
-            val doc = Jsoup.connect(url).cookie("regional", "ru%7CEurope%2FMoscow").get()
-            val programmes = doc.getElementsByClass("list-programme")
-//            Log.d(LOG_TAG, "found ${programmes.size} program section(s)")
-            val channelIds = mutableListOf("mezzo_hd", "mezzo")
-            for (program in programmes) {
-                val channelId = if (channelIds.isEmpty()) "0" else channelIds.removeAt(0)
-//                Log.d(LOG_TAG, "")
-//                Log.d(LOG_TAG, channelId)
-                for (li in program.children()) {
-                    if (li.tagName() == "li") {
-                        val desc = findIntermezzoList(li)
-                        val pair = findTimeAndTitle(li)
-                        if (pair != null) {
-                            val time = pair.first
-                            val title = pair.second
-//                            Log.d(LOG_TAG, "$time $title")
+            val now = LocalDate.now()
+            for (days in 0..13) {
+                val currentDate = now.plusDays(days.toLong())
+                val doc =
+                    Jsoup.connect(url)
+                        .cookie("regional", "ru%7CEurope%2FMoscow")
+                        .data("date", currentDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
+                        .get()
+                Log.i(LOG_TAG, "Parse shedule for ${currentDate}")
+                val programmes = doc.getElementsByClass("list-programme")
+//                Log.d(LOG_TAG, "found ${programmes.size} program section(s)")
+                val channelIds = mutableListOf("mezzo_hd", "mezzo")
+                for (program in programmes) {
+                    val channelId = if (channelIds.isEmpty()) "0" else channelIds.removeAt(0)
+//                    Log.d(LOG_TAG, "")
+//                    Log.d(LOG_TAG, channelId)
+                    for (li in program.children()) {
+                        if (li.tagName() == "li") {
+                            val desc = findIntermezzoList(li)
+                            val timeAndTitle = findTimeAndTitle(li)
+                            if (timeAndTitle != null) {
+                                val time = timeAndTitle.first
+                                val title = timeAndTitle.second
+//                                Log.d(LOG_TAG, "$time $title")
 
-                            if (prevTime != null && prevTitle != null) {
-                                serializer.startTag("", "programme")
-                                serializer.attribute("start", timeString(prevTime))
-                                serializer.attribute("stop", timeString(time))
-                                serializer.attribute("channel", channelId)
+                                if (prevTime != null && prevTitle != null) {
+                                    serializer.startTag("", "programme")
+                                    serializer.attribute("start", timeString(currentDate, prevTime))
+                                    serializer.attribute("stop", timeString(currentDate, time))
+                                    serializer.attribute("channel", channelId)
 
-                                serializer.startTag("", "title")
-                                serializer.attribute("lang", lang)
-                                serializer.text(prevTitle)
-                                serializer.endTag("", "title")
-
-                                if (prevDesc != null) {
-                                    serializer.startTag("", "desc")
+                                    serializer.startTag("", "title")
                                     serializer.attribute("lang", lang)
-                                    serializer.text(prevDesc)
-                                    serializer.endTag("", "desc")
+                                    serializer.text(prevTitle)
+                                    serializer.endTag("", "title")
+
+                                    if (prevDesc != null) {
+                                        serializer.startTag("", "desc")
+                                        serializer.attribute("lang", lang)
+                                        serializer.text(prevDesc)
+                                        serializer.endTag("", "desc")
+                                    }
+
+                                    serializer.endTag("", "programme")
                                 }
 
-                                serializer.endTag("", "programme")
+                                prevTime = time
+                                prevTitle = title
+                                prevDesc = desc
                             }
-
-                            prevTime = time
-                            prevTitle = title
-                            prevDesc = desc
                         }
                     }
-                }
 
-                if (prevTime != null && prevTitle != null) {
-                    serializer.startTag("", "programme")
-                    serializer.attribute("start", timeString(prevTime))
-                    serializer.attribute("stop", timeString("23:59"))
-                    serializer.attribute("channel", channelId)
+                    if (prevTime != null && prevTitle != null) {
+                        serializer.startTag("", "programme")
+                        serializer.attribute("start", timeString(currentDate, prevTime))
+                        serializer.attribute("stop", timeString(currentDate, LocalTime.of(23, 59)))
+                        serializer.attribute("channel", channelId)
 
-                    serializer.startTag("", "title")
-                    serializer.attribute("lang", lang)
-                    serializer.text(prevTitle)
-                    serializer.endTag("", "title")
-
-                    if (prevDesc != null) {
-                        serializer.startTag("", "desc")
+                        serializer.startTag("", "title")
                         serializer.attribute("lang", lang)
-                        serializer.text(prevDesc)
-                        serializer.endTag("", "desc")
-                    }
+                        serializer.text(prevTitle)
+                        serializer.endTag("", "title")
 
-                    serializer.endTag("", "programme")
-                    prevTime = null
-                    prevTitle = null
+                        if (prevDesc != null) {
+                            serializer.startTag("", "desc")
+                            serializer.attribute("lang", lang)
+                            serializer.text(prevDesc)
+                            serializer.endTag("", "desc")
+                        }
+
+                        serializer.endTag("", "programme")
+                        prevTime = null
+                        prevTitle = null
+                    }
                 }
             }
 
@@ -222,6 +223,8 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             serializer.endDocument()
             return writer.toString()
 
+        } catch (e: HttpStatusException ) {
+            notify("${e.url} returns ${e.statusCode} : ${e.message}")
         } catch (e: Exception) {
             Log.e(LOG_TAG, Log.getStackTraceString(e))
         } finally {
