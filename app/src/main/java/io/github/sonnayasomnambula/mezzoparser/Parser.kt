@@ -28,7 +28,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
             val stream = resolver.openOutputStream(uri)
             if (stream == null) {
-                notify("Unable to write $uri", NotificationLevel.WARNINIG)
+                notify(NotificationLevel.WARNINIG, "Unable to write $uri",)
                 return
             }
 
@@ -37,10 +37,11 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
                 stream.flush()
             }
 
-            notify("write ok: $uri")
-
+            notify(NotificationLevel.INFO, "write ok: $uri")
+        } catch (e: java.io.FileNotFoundException) {
+            notify(NotificationLevel.WARNINIG, e.localizedMessage)
         } catch (e: java.lang.Exception) {
-            Log.e(LOG_TAG, "exception while save $uri")
+            notify(NotificationLevel.WARNINIG, "exception while save '$uri'")
             Log.e(LOG_TAG, Log.getStackTraceString(e))
         }
     }
@@ -140,11 +141,11 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             serializer.endTag("", "display-name")
             serializer.endTag("", "channel")
 
-            notify("Processing...", NotificationLevel.PROGRESS)
+            notify(NotificationLevel.PROGRESS,"Processing...", )
 
             val url = "https://www.mezzo.tv/en/tv-schedule"
             val now = LocalDate.now()
-            for (days in 0..13) {
+            for (days in 0..7) {
                 val currentDate = now.plusDays(days.toLong())
                 val doc =
                     Jsoup.connect(url)
@@ -223,23 +224,24 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
             serializer.endTag("", "tv")
             serializer.endDocument()
+            notify(NotificationLevel.HIDE)
             return writer.toString()
 
         } catch (e: HttpStatusException ) {
-            notify("${e.url} returns ${e.statusCode} : ${e.message}")
+            notify(NotificationLevel.WARNINIG,"${e.url} returns ${e.statusCode} : ${e.message}")
         } catch (e: Exception) {
             Log.e(LOG_TAG, Log.getStackTraceString(e))
         } finally {
 
         }
-        
+
         return "error\r\n"
     }
 
     enum class NotificationLevel {
-        INFO, WARNINIG, PROGRESS
+        HIDE, INFO, WARNINIG, PROGRESS
     }
-    private fun notify(text: String, level: NotificationLevel = NotificationLevel.INFO) {
+    private fun notify(level: NotificationLevel, text: String = "") {
         if (level == NotificationLevel.INFO)
             Log.i(LOG_TAG, text)
         if (level == NotificationLevel.WARNINIG)
@@ -247,6 +249,10 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
         val CHANNEL_ID = "io.github.sonnayasomnambula.mezzoparser.parser"
         val NOTIFICATION_ID = 1
+
+        if (level == NotificationLevel.HIDE) {
+                NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher_round)
