@@ -5,21 +5,26 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
-import android.system.OsConstants
+import android.os.Environment
+import android.provider.DocumentsContract
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import io.github.sonnayasomnambula.mezzoparser.databinding.ActivityMainBinding
+import java.io.FileNotFoundException
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var ui: ActivityMainBinding
     private lateinit var settings: SharedPreferences
+
+    private var savedTextColor: Int? = null
 
     inner class PermissionChecker {
         private var required = ArrayList<String>()
@@ -54,7 +59,7 @@ class MainActivity : AppCompatActivity() {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = "text/xml"
                 putExtra(Intent.EXTRA_TITLE, "mezzo.xml")
-//                putExtra(DocumentsContract.EXTRA_INITIAL_URI, "/storage/emulated/0/Movies")
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES))
             }
 
         override fun parseResult(resultCode: Int, intent: Intent?): Uri? {
@@ -63,8 +68,9 @@ class MainActivity : AppCompatActivity() {
             if (uri == null || resultCode != Activity.RESULT_OK)
                 return null
             ui.label.text = uri.toString()
-            settings.edit().putString(Settings.Tags.URI, uri.toString()).apply()
+            ui.label.setTextColor(savedTextColor ?: ui.label.currentTextColor)
 
+            settings.edit().putString(Settings.Tags.URI, uri.toString()).apply()
             return uri
         }
 
@@ -72,7 +78,9 @@ class MainActivity : AppCompatActivity() {
 
     val saver = registerForActivityResult(FileCreator()) { uri: Uri? ->
         Log.d(LOG_TAG, "URI: $uri")
-        Toast.makeText(this, "File created", Toast.LENGTH_SHORT).show()
+        if (uri != null) {
+            Toast.makeText(this, "File created", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun onPermissionGranted() {
@@ -100,7 +108,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        ui.label.text = settings.getString(Settings.Tags.URI, "")
+        val path = settings.getString(Settings.Tags.URI, "")
+        ui.label.text = path
+        try {
+            val stream = contentResolver.openInputStream(Uri.parse(path))
+            if (stream == null) {
+                throw FileNotFoundException("Something goes wrong... Try to push CREATE FILE button.")
+            } else {
+                stream.close()
+            }
+        } catch (e : FileNotFoundException) {
+            savedTextColor = ui.label.currentTextColor
+            ui.label.text = e.message
+            ui.label.setTextColor(Color.RED)
+        }
 
         val checker = PermissionChecker()
         checker.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
