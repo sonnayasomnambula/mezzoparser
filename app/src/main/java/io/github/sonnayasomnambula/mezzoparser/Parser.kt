@@ -17,6 +17,7 @@ import org.jsoup.HttpStatusException
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.io.StringWriter
+import java.net.SocketTimeoutException
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
@@ -46,59 +47,64 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         }
     }
 
-    private fun findTimeAndTitle(el: Element) : Pair<LocalTime, String>? {
+    private fun findTime(el: Element) : LocalTime? {
         for (child in el.children()) {
             if (child.tagName() == "span") {
                 try {
-                    val time = LocalTime.parse(child.text().trim(), DateTimeFormatter.ofPattern("H:mm"))
-                    val title = el.ownText().trim()
-                    return Pair(time, title)
+                    return LocalTime.parse(child.text().trim(), DateTimeFormatter.ofPattern("H:mm"))
                 } catch (e: java.time.format.DateTimeParseException) {
                     Log.w(LOG_TAG, "Parse error: '${child.text()}' is not a valid time string")
                 }
             } else {
-                val pair = findTimeAndTitle(child)
-                if (pair != null)
-                    return pair
+                val time = findTime(child)
+                if (time != null)
+                    return time
             }
         }
 
         return null
     }
 
-    private fun getUl(el: Element, className: String) : Element? {
+    private fun findTitle(el: Element) : String? {
         for (child in el.children()) {
-            if (child.tagName() == "ul" && child.className() == className) {
-                return child
+            if (child.className() == "title--3") {
+                var title = child.ownText().trim()
+                if (title.isEmpty())
+                    title = child.text().trim()
+                if (!title.isEmpty())
+                    return title
             }
-        }
-        return null
-    }
 
-    private fun parseIntermezzoList(el: Element) : String? {
-        val descr = mutableListOf<String>()
-        for (li in el.children()) {
-            for (ul in li.children()) {
-                val line = mutableListOf<String>()
-                for (li2 in ul.children()) {
-                    line.add(li2.text())
-                }
-                descr.add(line.joinToString(" | "))
-            }
+            val title = findTitle(child);
+            if (title != null)
+                return title
         }
-        return if (descr.isEmpty()) null else descr.joinToString("\r\n")
+
+        return null
     }
 
     private fun findIntermezzoList(el: Element) : String? {
-        val ul = getUl(el, "list-intermezzo")
-        if (ul != null) {
-            return parseIntermezzoList(ul)
+        val descr = mutableListOf<String>()
+        for (ul in el.children()) {
+            if (ul.className() == "list-intermezzo") {
+                val line = mutableListOf<String>()
+                for (li in ul.children()) {
+                    line.add(li.text())
+                }
+                if (line.isNotEmpty()) {
+                    descr.add(line.joinToString(" | "))
+                }
+            }
+        }
+
+        if (descr.isNotEmpty()) {
+            return descr.joinToString("\r\n")
         }
 
         for (child in el.children()) {
-            val descr = findIntermezzoList(child)
-            if (descr != null)
-                return descr
+            val intermezzo = findIntermezzoList(child)
+            if (intermezzo != null)
+                return intermezzo
         }
 
         return null
@@ -108,7 +114,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         date.format(DateTimeFormatter.ofPattern("yyyyMMdd")) + time.format(DateTimeFormatter.ofPattern("HHmmss")) + " +0300"
 
 
-    private fun getShedule() : String {
+    private fun getSchedule() : String? {
         val lang = "ru"
         val serializer = Xml.newSerializer()
         val writer = StringWriter()
@@ -116,6 +122,8 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         var prevTime: LocalTime? = null
         var prevTitle: String? = null
         var prevDesc: String? = null
+
+        val url = "https://www.mezzo.tv/en/tv-schedule"
 
         try {
             serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
@@ -143,12 +151,12 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
             notify(NotificationLevel.PROGRESS,"Processing...", )
 
-            val url = "https://www.mezzo.tv/en/tv-schedule"
             val now = LocalDate.now()
-            for (days in 0..7) {
+            for (days in 0..3) {
                 val currentDate = now.plusDays(days.toLong())
                 val doc =
                     Jsoup.connect(url)
+                        .timeout(12000)
                         .cookie("regional", "ru%7CEurope%2FMoscow")
                         .data("date", currentDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
                         .get()
@@ -162,11 +170,10 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 //                    Log.d(LOG_TAG, channelId)
                     for (li in program.children()) {
                         if (li.tagName() == "li") {
+                            val time = findTime(li)
+                            val title = findTitle(li)
                             val desc = findIntermezzoList(li)
-                            val timeAndTitle = findTimeAndTitle(li)
-                            if (timeAndTitle != null) {
-                                val time = timeAndTitle.first
-                                val title = timeAndTitle.second
+                            if (time != null && title != null) {
 //                                Log.d(LOG_TAG, "$time $title")
 
                                 if (prevTime != null && prevTitle != null) {
@@ -227,15 +234,17 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             notify(NotificationLevel.HIDE)
             return writer.toString()
 
-        } catch (e: HttpStatusException ) {
+        } catch (e: HttpStatusException) {
             notify(NotificationLevel.WARNINIG,"${e.url} returns ${e.statusCode} : ${e.message}")
+            return null
+        } catch (e: SocketTimeoutException) {
+            notify(NotificationLevel.WARNINIG, "$url is not responding: ${e.message}")
+            return null
         } catch (e: Exception) {
+            notify(NotificationLevel.WARNINIG, "Parsing failed: ${e.message}")
             Log.e(LOG_TAG, Log.getStackTraceString(e))
-        } finally {
-
+            return null
         }
-
-        return "error\r\n"
     }
 
     enum class NotificationLevel {
@@ -313,10 +322,10 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
     override fun run() {
         super.run()
 
-        val text = getShedule()
+        val text = getSchedule()
 
         val fileUri = settings.getString(Settings.Tags.URI, null)
-        if (fileUri != null)
+        if (text != null && fileUri != null)
             writeFile(Uri.parse(fileUri), text)
     }
 }

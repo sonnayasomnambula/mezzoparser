@@ -24,7 +24,7 @@
         <service
             android:name=".ParserService"
             android:enabled="true"
-            android:exported="true"></service>
+            android:exported="true"/>
 
         <activity
             android:name=".MainActivity"

@@ -86,6 +86,20 @@ class MainActivity : AppCompatActivity() {
     private fun onPermissionGranted() {
         ui.btnCreateFile.isEnabled = true
         ui.btnStartService.isEnabled = true
+
+        try {
+            val path = ui.label.text.toString()
+            val stream = contentResolver.openInputStream(Uri.parse(path))
+            if (stream == null) {
+                throw FileNotFoundException("Something goes wrong... Try to push CREATE FILE button.")
+            } else {
+                stream.close()
+            }
+        } catch (e : FileNotFoundException) {
+            savedTextColor = ui.label.currentTextColor
+            ui.label.text = e.message
+            ui.label.setTextColor(Color.RED)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,20 +122,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val path = settings.getString(Settings.Tags.URI, "")
-        ui.label.text = path
-        try {
-            val stream = contentResolver.openInputStream(Uri.parse(path))
-            if (stream == null) {
-                throw FileNotFoundException("Something goes wrong... Try to push CREATE FILE button.")
-            } else {
-                stream.close()
-            }
-        } catch (e : FileNotFoundException) {
-            savedTextColor = ui.label.currentTextColor
-            ui.label.text = e.message
-            ui.label.setTextColor(Color.RED)
-        }
+        ui.label.text = settings.getString(Settings.Tags.URI, "")
 
         val checker = PermissionChecker()
         checker.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
