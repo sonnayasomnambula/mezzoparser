@@ -19,6 +19,7 @@ import org.jsoup.nodes.Element
 import java.io.StringWriter
 import java.net.SocketTimeoutException
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
@@ -40,7 +41,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
             notify(NotificationLevel.INFO, "write ok: $uri")
         } catch (e: java.io.FileNotFoundException) {
-            notify(NotificationLevel.WARNINIG, e.localizedMessage)
+            notify(NotificationLevel.WARNINIG, "${e.localizedMessage}")
         } catch (e: java.lang.Exception) {
             notify(NotificationLevel.WARNINIG, "exception while save '$uri'")
             Log.e(LOG_TAG, Log.getStackTraceString(e))
@@ -110,14 +111,72 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         return null
     }
 
-    private fun timeString(date: LocalDate, time: LocalTime) : String =
-        date.format(DateTimeFormatter.ofPattern("yyyyMMdd")) + time.format(DateTimeFormatter.ofPattern("HHmmss")) + " +0300"
+    class Serializer {
+        private val lang = "ru"
+        private val ser = Xml.newSerializer()
+        private val writer = StringWriter()
+
+        fun start() {
+            ser.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
+            ser.setOutput(writer)
+            ser.startDocument("UTF-8", false)
+            ser.docdecl(" tv SYSTEM \"xmltv.dtd\"")
+            ser.startTag("", "tv")
+            ser.attribute("generator-info-name", "Mezzo parser")
+
+            ser.startTag("", "channel")
+            ser.attribute("id", "mezzo")
+            ser.startTag("", "display-name")
+            ser.attribute("lang", lang)
+            ser.text("Mezzo")
+            ser.endTag("", "display-name")
+            ser.endTag("", "channel")
+
+            ser.startTag("", "channel")
+            ser.attribute("id", "mezzo_hd")
+            ser.startTag("", "display-name")
+            ser.attribute("lang", lang)
+            ser.text("Mezzo Live HD")
+            ser.endTag("", "display-name")
+            ser.endTag("", "channel")
+        }
+
+        fun write(start: LocalDateTime, stop: LocalDateTime, channel: String, title: String, desc: String? ) {
+            ser.startTag("", "programme")
+            ser.attribute("start", timeString(start))
+            ser.attribute("stop", timeString(stop))
+            ser.attribute("channel", channel)
+
+            ser.startTag("", "title")
+            ser.attribute("lang", lang)
+            ser.text(title)
+            ser.endTag("", "title")
+
+            if (desc != null) {
+                ser.startTag("", "desc")
+                ser.attribute("lang", lang)
+                ser.text(desc)
+                ser.endTag("", "desc")
+            }
+
+            ser.endTag("", "programme")
+        }
+
+        fun finish() {
+            ser.endTag("", "tv")
+            ser.endDocument()
+        }
+
+        override fun toString(): String =
+            writer.toString()
+
+        private fun timeString(time: LocalDateTime) : String =
+            time.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) + " +0300"
+    }
 
 
     private fun getSchedule() : String? {
-        val lang = "ru"
-        val serializer = Xml.newSerializer()
-        val writer = StringWriter()
+        val serializer = Serializer()
 
         var prevTime: LocalTime? = null
         var prevTitle: String? = null
@@ -126,28 +185,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         val url = "https://www.mezzo.tv/en/tv-schedule"
 
         try {
-            serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
-            serializer.setOutput(writer)
-            serializer.startDocument("UTF-8", false)
-            serializer.docdecl(" tv SYSTEM \"xmltv.dtd\"")
-            serializer.startTag("", "tv")
-            serializer.attribute("generator-info-name", "Mezzo parser")
-
-            serializer.startTag("", "channel")
-            serializer.attribute("id", "mezzo")
-            serializer.startTag("", "display-name")
-            serializer.attribute("lang", lang)
-            serializer.text("Mezzo")
-            serializer.endTag("", "display-name")
-            serializer.endTag("", "channel")
-
-            serializer.startTag("", "channel")
-            serializer.attribute("id", "mezzo_hd")
-            serializer.startTag("", "display-name")
-            serializer.attribute("lang", lang)
-            serializer.text("Mezzo Live HD")
-            serializer.endTag("", "display-name")
-            serializer.endTag("", "channel")
+            serializer.start()
 
             notify(NotificationLevel.PROGRESS,"Processing...", )
 
@@ -177,24 +215,11 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 //                                Log.d(LOG_TAG, "$time $title")
 
                                 if (prevTime != null && prevTitle != null) {
-                                    serializer.startTag("", "programme")
-                                    serializer.attribute("start", timeString(currentDate, prevTime))
-                                    serializer.attribute("stop", timeString(currentDate, time))
-                                    serializer.attribute("channel", channelId)
-
-                                    serializer.startTag("", "title")
-                                    serializer.attribute("lang", lang)
-                                    serializer.text(prevTitle)
-                                    serializer.endTag("", "title")
-
-                                    if (prevDesc != null) {
-                                        serializer.startTag("", "desc")
-                                        serializer.attribute("lang", lang)
-                                        serializer.text(prevDesc)
-                                        serializer.endTag("", "desc")
-                                    }
-
-                                    serializer.endTag("", "programme")
+                                    serializer.write(LocalDateTime.of(currentDate, prevTime),
+                                              LocalDateTime.of(currentDate, time),
+                                              channelId,
+                                              prevTitle,
+                                              prevDesc)
                                 }
 
                                 prevTime = time
@@ -205,34 +230,21 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
                     }
 
                     if (prevTime != null && prevTitle != null) {
-                        serializer.startTag("", "programme")
-                        serializer.attribute("start", timeString(currentDate, prevTime))
-                        serializer.attribute("stop", timeString(currentDate, LocalTime.of(23, 59)))
-                        serializer.attribute("channel", channelId)
+                        serializer.write(LocalDateTime.of(currentDate, prevTime),
+                                  LocalDateTime.of(currentDate, LocalTime.of(23, 59)),
+                                  channelId,
+                                  prevTitle,
+                                  prevDesc)
 
-                        serializer.startTag("", "title")
-                        serializer.attribute("lang", lang)
-                        serializer.text(prevTitle)
-                        serializer.endTag("", "title")
-
-                        if (prevDesc != null) {
-                            serializer.startTag("", "desc")
-                            serializer.attribute("lang", lang)
-                            serializer.text(prevDesc)
-                            serializer.endTag("", "desc")
-                        }
-
-                        serializer.endTag("", "programme")
                         prevTime = null
                         prevTitle = null
                     }
                 }
             }
 
-            serializer.endTag("", "tv")
-            serializer.endDocument()
+            serializer.finish()
             notify(NotificationLevel.HIDE)
-            return writer.toString()
+            return serializer.toString()
 
         } catch (e: HttpStatusException) {
             notify(NotificationLevel.WARNINIG,"${e.url} returns ${e.statusCode} : ${e.message}")
