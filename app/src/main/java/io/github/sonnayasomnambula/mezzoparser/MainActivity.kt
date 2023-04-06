@@ -53,15 +53,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    inner class FileCreator : ActivityResultContract<Void?, Uri?>() {
-        override fun createIntent(context: Context, input: Void?) =
-            Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "text/xml"
-                putExtra(Intent.EXTRA_TITLE, "mezzo.xml")
-                putExtra(DocumentsContract.EXTRA_INITIAL_URI, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES))
-            }
-
+    abstract inner class Filer : ActivityResultContract<Void?, Uri?>() {
         override fun parseResult(resultCode: Int, intent: Intent?): Uri? {
             val uri = intent?.data
             Log.d(LOG_TAG, "result uri: $uri") // URI: content://com.android.externalstorage.documents/document/primary%3AMovies%2Fmezzo.xml
@@ -69,11 +61,30 @@ class MainActivity : AppCompatActivity() {
                 return null
             ui.label.text = uri.toString()
             ui.label.setTextColor(savedTextColor ?: ui.label.currentTextColor)
+            ui.btnStartService.isEnabled = true
 
             settings.edit().putString(Settings.Tags.URI, uri.toString()).apply()
             return uri
         }
+    }
 
+    inner class FileCreator : Filer() {
+        override fun createIntent(context: Context, input: Void?) =
+            Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "text/xml"
+                putExtra(Intent.EXTRA_TITLE, "mezzo.xml")
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES))
+            }
+    }
+
+    inner class FileOpener : Filer() {
+        override fun createIntent(context: Context, input: Void?) =
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "text/xml"
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES))
+            }
     }
 
     val saver = registerForActivityResult(FileCreator()) { uri: Uri? ->
@@ -83,11 +94,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun onPermissionGranted() {
-        ui.btnCreateFile.isEnabled = true
-        ui.btnStartService.isEnabled = true
+    val loader = registerForActivityResult(FileOpener()) { uri: Uri? ->
+        Log.d(LOG_TAG, "URI: $uri")
+    }
 
+    private fun onPermissionGranted() {
         try {
+            ui.btnCreateFile.isEnabled = true
+            ui.btnOpenFile.isEnabled = true
+
             val path = ui.label.text.toString()
             val stream = contentResolver.openInputStream(Uri.parse(path))
             if (stream == null) {
@@ -95,10 +110,23 @@ class MainActivity : AppCompatActivity() {
             } else {
                 stream.close()
             }
+
+            ui.btnStartService.isEnabled = true
         } catch (e : FileNotFoundException) {
+            savedTextColor = ui.label.currentTextColor
+            ui.label.text = "File not found"
+            ui.label.setTextColor(Color.RED)
+            Log.e(LOG_TAG, Log.getStackTraceString(e))
+        } catch (e: SecurityException) {
+            savedTextColor = ui.label.currentTextColor
+            ui.label.text = "Permission denied"
+            ui.label.setTextColor(Color.RED)
+            Log.e(LOG_TAG, Log.getStackTraceString(e))
+        } catch (e: Exception) {
             savedTextColor = ui.label.currentTextColor
             ui.label.text = e.message
             ui.label.setTextColor(Color.RED)
+            Log.e(LOG_TAG, Log.getStackTraceString(e))
         }
     }
 
@@ -114,6 +142,10 @@ class MainActivity : AppCompatActivity() {
 
         ui.btnCreateFile.setOnClickListener {
             saver.launch(null)
+        }
+
+        ui.btnOpenFile.setOnClickListener {
+            loader.launch(null)
         }
 
         ui.btnStartService.setOnClickListener {
