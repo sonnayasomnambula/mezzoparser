@@ -1,9 +1,7 @@
 package io.github.sonnayasomnambula.mezzoparser
 
 import android.app.Activity
-import android.content.Context
-import android.content.Intent
-import android.content.SharedPreferences
+import android.content.*
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.net.Uri
@@ -16,6 +14,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import io.github.sonnayasomnambula.mezzoparser.databinding.ActivityMainBinding
 import java.io.FileNotFoundException
 
@@ -50,6 +49,23 @@ class MainActivity : AppCompatActivity() {
             }
 
             launcher.launch(required.toTypedArray())
+        }
+    }
+
+    private val broadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                BroadcastMessage.ANOTHER_TIME -> {
+                    val date = intent.getStringExtra(BroadcastMessage.DATA_DATE)
+                    val time = intent.getStringExtra(BroadcastMessage.DATA_TIME)
+                    val progress = intent.getDoubleExtra(BroadcastMessage.DATA_PROGRESS, 0.0)
+                    ui.status.text = "parsing $date $time..."
+                    ui.progress.progress = if (progress >= 0) (progress * 100).toInt() else 0
+                }
+                BroadcastMessage.DONE -> {
+                    ui.status.text = "parsing done."
+                }
+            }
         }
     }
 
@@ -140,6 +156,10 @@ class MainActivity : AppCompatActivity() {
 
         Log.d(LOG_TAG, "Activity: onCreate")
 
+        ui.checkDownloadDescription.setOnCheckedChangeListener { buttonView, isChecked ->
+            settings.edit().putBoolean(Settings.Tags.DOWNLOAD_DESCRIPTION, isChecked).apply()
+        }
+
         ui.btnCreateFile.setOnClickListener {
             saver.launch(null)
         }
@@ -154,6 +174,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        ui.checkDownloadDescription.isChecked = settings.getBoolean(Settings.Tags.DOWNLOAD_DESCRIPTION, false)
         ui.label.text = settings.getString(Settings.Tags.URI, "")
 
         val checker = PermissionChecker()
@@ -165,8 +186,14 @@ class MainActivity : AppCompatActivity() {
         checker.check()
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        Log.d(LOG_TAG, "Activity: onDestroy")
+    override fun onResume() {
+        super.onResume()
+        LocalBroadcastManager.getInstance(this)
+            .registerReceiver(broadcastReceiver, IntentFilter(BroadcastMessage.ANOTHER_TIME))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(broadcastReceiver)
     }
 }

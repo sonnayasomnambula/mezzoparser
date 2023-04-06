@@ -13,9 +13,11 @@ import android.util.Log
 import android.util.Xml
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import org.jsoup.HttpStatusException
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
+import org.jsoup.safety.Whitelist
 import java.io.StringWriter
 import java.net.SocketTimeoutException
 import java.time.LocalDate
@@ -57,9 +59,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
                     Log.w(LOG_TAG, "Parse error: '${child.text()}' is not a valid time string")
                 }
             } else {
-                val time = findTime(child)
-                if (time != null)
-                    return time
+                findTime(child)?.let { return it }
             }
         }
 
@@ -76,9 +76,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
                     return title
             }
 
-            val title = findTitle(child);
-            if (title != null)
-                return title
+            findTitle(child)?.let { return it }
         }
 
         return null
@@ -98,17 +96,73 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             }
         }
 
-        if (descr.isNotEmpty()) {
+        if (descr.isNotEmpty())
             return descr.joinToString("\r\n")
-        }
 
-        for (child in el.children()) {
-            val intermezzo = findIntermezzoList(child)
-            if (intermezzo != null)
-                return intermezzo
+        for (child in el.children())
+            findIntermezzoList(child)?.let { return it }
+
+        return null
+    }
+
+    private fun findUrl(el: Element) : String? {
+        el.select("a[href]").firstOrNull()?.let {
+            val href = it.absUrl("href")
+            if (href.isNotEmpty())
+                return href
         }
 
         return null
+    }
+
+    private fun downloadDescription(url: String?) : String? {
+        if (url == null)
+            return null
+
+        try {
+            val doc =
+                Jsoup.connect(url)
+                    .timeout(12000)
+                    .get()
+
+            doc.getElementsByClass("programme-mosaic__content editorial").firstOrNull()?.let {
+                val desc = mutableListOf<String>()
+                it.getElementsByClass("list-authors").firstOrNull()?.let {
+                    val authors = mutableListOf<String>()
+                    for (li in it.children()) {
+                        authors.add(li.text())
+                    }
+                    desc.add(authors.joinToString(" | "))
+                }
+
+                if (desc.isNotEmpty())
+                    desc.add("")
+
+                for (p in it.getElementsByTag("p")) {
+                    for (line in p.html().split("<br>")) {
+                        val clean = Jsoup.clean(line.replace("&nbsp;", " "), Whitelist.none()).trim()
+                        if (clean.isNotEmpty())
+                            desc.add(clean)
+                    }
+                }
+
+                if (desc.isNotEmpty())
+                    return desc.joinToString("\r\n")
+            }
+
+            return null
+
+        } catch (e: HttpStatusException) {
+            notify(NotificationLevel.WARNINIG,"${e.url} returns ${e.statusCode} : ${e.message}")
+            return null
+        } catch (e: SocketTimeoutException) {
+            notify(NotificationLevel.WARNINIG, "$url is not responding: ${e.message}")
+            return null
+        } catch (e: Exception) {
+            notify(NotificationLevel.WARNINIG, "Parsing failed: ${e.message}")
+            Log.e(LOG_TAG, Log.getStackTraceString(e))
+            return null
+        }
     }
 
     class Serializer {
@@ -184,6 +238,8 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
         val url = "https://www.mezzo.tv/en/tv-schedule"
 
+        val doDownloadDescription = settings.getBoolean(Settings.Tags.DOWNLOAD_DESCRIPTION, false)
+
         try {
             serializer.start()
 
@@ -192,6 +248,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             val now = LocalDate.now()
             for (days in 0..3) {
                 val currentDate = now.plusDays(days.toLong())
+
                 val doc =
                     Jsoup.connect(url)
                         .timeout(12000)
@@ -210,9 +267,16 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
                         if (li.tagName() == "li") {
                             val time = findTime(li)
                             val title = findTitle(li)
-                            val desc = findIntermezzoList(li)
+                            val desc = findIntermezzoList(li) ?: if (doDownloadDescription) downloadDescription(findUrl(li)) else null
+//                            val desc = findIntermezzoList(li)
                             if (time != null && title != null) {
 //                                Log.d(LOG_TAG, "$time $title")
+
+                                val intent = Intent(BroadcastMessage.ANOTHER_TIME)
+                                intent.putExtra(BroadcastMessage.DATA_DATE, currentDate.toString())
+                                intent.putExtra(BroadcastMessage.DATA_TIME, time.toString())
+                                intent.putExtra(BroadcastMessage.DATA_PROGRESS, 1.0 * program.children().indexOf(li) / program.children().size)
+                                LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
 
                                 if (prevTime != null && prevTitle != null) {
                                     serializer.write(LocalDateTime.of(currentDate, prevTime),
@@ -243,6 +307,10 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             }
 
             serializer.finish()
+
+            val intent = Intent(BroadcastMessage.DONE)
+            LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
+
             notify(NotificationLevel.HIDE)
             return serializer.toString()
 
@@ -288,46 +356,6 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             val channel = NotificationChannel(CHANNEL_ID, "Parser notifications", NotificationManager.IMPORTANCE_DEFAULT)
             createNotificationChannel(channel)
             notify(NOTIFICATION_ID, builder.build())
-        }
-    }
-
-
-    private fun toXmlTv() : String {
-        val lang = "ru"
-        val serializer = Xml.newSerializer()
-        try {
-            serializer.setFeature("http://xmlpull.org/v1/doc/features.html#indent-output", true);
-            return serializer.document {
-                element("tv") {
-                    attribute("generator-info-name", "Mezzo parser 2")
-                    element("channel") {
-                        attribute("id", "mezzo")
-                        element("display-name", "Mezzo") {
-                            attribute("lang", lang)
-                        }
-                    }
-                    element("channel") {
-                        attribute("id", "mezzo_hd")
-                        element("display-name", "Mezzo Live HD") {
-                            attribute("lang", lang)
-                        }
-                    }
-                    element("programme") {
-                        attribute("start", "20230202100000 +0300")
-                        attribute("stop", "20230202110000 +0300")
-                        attribute("channel", "mezzo")
-                        element("title", "A program at 10") {
-                            attribute("lang", lang)
-                        }
-                        element("desc", "A very interesting program!") {
-                            attribute("lang", lang)
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(LOG_TAG, Log.getStackTraceString(e))
-            return "error"
         }
     }
 
