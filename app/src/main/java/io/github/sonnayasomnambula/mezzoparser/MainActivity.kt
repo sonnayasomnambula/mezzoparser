@@ -55,15 +55,13 @@ class MainActivity : AppCompatActivity() {
     private val broadcastReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
-                BroadcastMessage.ANOTHER_TIME -> {
-                    val date = intent.getStringExtra(BroadcastMessage.DATA_DATE)
-                    val time = intent.getStringExtra(BroadcastMessage.DATA_TIME)
-                    val progress = intent.getDoubleExtra(BroadcastMessage.DATA_PROGRESS, 0.0)
-                    ui.status.text = "parsing $date $time..."
-                    ui.progress.progress = if (progress >= 0) (progress * 100).toInt() else 0
-                }
-                BroadcastMessage.DONE -> {
-                    ui.status.text = "parsing done."
+                BroadcastMessage.PROGRESS -> {
+                    val message = intent.getStringExtra(BroadcastMessage.DATA_MESSAGE)
+                    val progress1 = intent.getDoubleExtra(BroadcastMessage.DATA_PROGRESS1, 0.0)
+                    val progress2 = intent.getDoubleExtra(BroadcastMessage.DATA_PROGRESS2, 0.0)
+                    ui.status.text =  "$message"
+                    ui.progress1.progress = if (progress1 >= 0) (progress1 * 100).toInt() else 0
+                    ui.progress2.progress = if (progress2 >= 0) (progress2 * 100).toInt() else 0
                 }
             }
         }
@@ -189,7 +187,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         LocalBroadcastManager.getInstance(this)
-            .registerReceiver(broadcastReceiver, IntentFilter(BroadcastMessage.ANOTHER_TIME))
+            .registerReceiver(broadcastReceiver, IntentFilter(BroadcastMessage.PROGRESS))
     }
 
     override fun onPause() {

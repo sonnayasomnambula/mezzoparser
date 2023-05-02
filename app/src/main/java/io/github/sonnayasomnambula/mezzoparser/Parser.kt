@@ -32,7 +32,7 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
             val stream = resolver.openOutputStream(uri)
             if (stream == null) {
-                notify(NotificationLevel.WARNINIG, "Unable to write $uri",)
+                notify("Unable to write $uri",)
                 return
             }
 
@@ -41,11 +41,10 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
                 stream.flush()
             }
 
-            notify(NotificationLevel.INFO, "write ok: $uri")
         } catch (e: java.io.FileNotFoundException) {
-            notify(NotificationLevel.WARNINIG, "${e.localizedMessage}")
+            notify("${e.localizedMessage}")
         } catch (e: java.lang.Exception) {
-            notify(NotificationLevel.WARNINIG, "exception while save '$uri'")
+            notify("exception while save '$uri'")
             Log.e(LOG_TAG, Log.getStackTraceString(e))
         }
     }
@@ -153,13 +152,13 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
             return null
 
         } catch (e: HttpStatusException) {
-            notify(NotificationLevel.WARNINIG,"${e.url} returns ${e.statusCode} : ${e.message}")
+            notify("${e.url} returns ${e.statusCode} : ${e.message}")
             return null
         } catch (e: SocketTimeoutException) {
-            notify(NotificationLevel.WARNINIG, "$url is not responding: ${e.message}")
+            notify("$url is not responding: ${e.message}")
             return null
         } catch (e: Exception) {
-            notify(NotificationLevel.WARNINIG, "Parsing failed: ${e.message}")
+            notify("Parsing failed: ${e.message}")
             Log.e(LOG_TAG, Log.getStackTraceString(e))
             return null
         }
@@ -232,6 +231,8 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
     private fun getSchedule() : String? {
         val serializer = Serializer()
 
+        val MAX_DAYS = 3
+
         var prevTime: LocalTime? = null
         var prevTitle: String? = null
         var prevDesc: String? = null
@@ -243,10 +244,8 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
         try {
             serializer.start()
 
-            notify(NotificationLevel.PROGRESS,"Processing...", )
-
             val now = LocalDate.now()
-            for (days in 0..3) {
+            for (days in 0..MAX_DAYS) {
                 val currentDate = now.plusDays(days.toLong())
 
                 val doc =
@@ -272,10 +271,10 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
                             if (time != null && title != null) {
 //                                Log.d(LOG_TAG, "$time $title")
 
-                                val intent = Intent(BroadcastMessage.ANOTHER_TIME)
-                                intent.putExtra(BroadcastMessage.DATA_DATE, currentDate.toString())
-                                intent.putExtra(BroadcastMessage.DATA_TIME, time.toString())
-                                intent.putExtra(BroadcastMessage.DATA_PROGRESS, 1.0 * program.children().indexOf(li) / program.children().size)
+                                val intent = Intent(BroadcastMessage.PROGRESS)
+                                intent.putExtra(BroadcastMessage.DATA_MESSAGE, "$channelId ${currentDate.toString()} ${time.toString()}")
+                                intent.putExtra(BroadcastMessage.DATA_PROGRESS1, 1.0 * days / (MAX_DAYS + 1))
+                                intent.putExtra(BroadcastMessage.DATA_PROGRESS2, 1.0 * program.children().indexOf(li) / program.children().size)
                                 LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
 
                                 if (prevTime != null && prevTitle != null) {
@@ -308,49 +307,38 @@ class ParserThread(private val context: Context, private val resolver: ContentRe
 
             serializer.finish()
 
-            val intent = Intent(BroadcastMessage.DONE)
+            val intent = Intent(BroadcastMessage.PROGRESS)
+            intent.putExtra(BroadcastMessage.DATA_MESSAGE, "Done")
+            intent.putExtra(BroadcastMessage.DATA_PROGRESS1, 1.0)
+            intent.putExtra(BroadcastMessage.DATA_PROGRESS2, 1.0)
             LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
 
-            notify(NotificationLevel.HIDE)
             return serializer.toString()
 
         } catch (e: HttpStatusException) {
-            notify(NotificationLevel.WARNINIG,"${e.url} returns ${e.statusCode} : ${e.message}")
+            notify("${e.url} returns ${e.statusCode} : ${e.message}")
             return null
         } catch (e: SocketTimeoutException) {
-            notify(NotificationLevel.WARNINIG, "$url is not responding: ${e.message}")
+            notify("$url is not responding: ${e.message}")
             return null
         } catch (e: Exception) {
-            notify(NotificationLevel.WARNINIG, "Parsing failed: ${e.message}")
+            notify("Parsing failed: ${e.message}")
             Log.e(LOG_TAG, Log.getStackTraceString(e))
             return null
         }
     }
 
-    enum class NotificationLevel {
-        HIDE, INFO, WARNINIG, PROGRESS
-    }
-    private fun notify(level: NotificationLevel, text: String = "") {
-        if (level == NotificationLevel.INFO)
-            Log.i(LOG_TAG, text)
-        if (level == NotificationLevel.WARNINIG)
-            Log.w(LOG_TAG, text)
+    private fun notify(text: String = "") {
+        Log.w(LOG_TAG, text)
 
         val CHANNEL_ID = "io.github.sonnayasomnambula.mezzoparser.parser"
         val NOTIFICATION_ID = 1
-
-        if (level == NotificationLevel.HIDE) {
-                NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
-        }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher_round)
             .setContentTitle("Mezzo parser")
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-
-        if (level == NotificationLevel.PROGRESS)
-            builder.setProgress(100, 0, true)
 
         with(NotificationManagerCompat.from(context)) {
             val channel = NotificationChannel(CHANNEL_ID, "Parser notifications", NotificationManager.IMPORTANCE_DEFAULT)

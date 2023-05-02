@@ -17,11 +17,9 @@ class Settings {
 
 class BroadcastMessage {
     companion object {
-        val ANOTHER_TIME = "io.github.sonnayasomnambula.mezzoparser.action.ANOTHER_TIME"
-        val DATA_DATE = "date"
-        val DATA_TIME = "time"
-        val DATA_PROGRESS = "progress"
-
-        val DONE = "io.github.sonnayasomnambula.mezzoparser.action.DONE"
+        val PROGRESS = "io.github.sonnayasomnambula.mezzoparser.action.PROGRESS"
+        val DATA_MESSAGE = "message"
+        val DATA_PROGRESS1 = "progress1"
+        val DATA_PROGRESS2 = "progress2"
     }
 }
